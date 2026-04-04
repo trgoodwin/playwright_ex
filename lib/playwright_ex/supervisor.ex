@@ -11,6 +11,9 @@ defmodule PlaywrightEx.Supervisor do
     If provided, uses WebSocket transport. Otherwise uses local Port.
     If no browser param is provided, `chromium` is used by default.
   - `:executable` - Path to playwright CLI (only for Port transport)
+  - `:runtime` - JS runtime to use (e.g. `"bun"`, `"node"`). When set, the runtime is spawned
+    as the executable and the playwright CLI path is passed as an argument. When unset, the
+    playwright CLI is executed directly via its shebang (requires Node.js). Only for Port transport.
   - `:timeout` - Connection timeout
   - `:js_logger` - Module for logging JS console messages
   - `:name` - Optional name for this supervisor instance. Defaults to `PlaywrightEx.Supervisor`.
@@ -40,6 +43,7 @@ defmodule PlaywrightEx.Supervisor do
       Keyword.validate!(opts, [
         :timeout,
         :ws_endpoint,
+        :runtime,
         :fail_on_unknown_opts,
         executable: "playwright",
         js_logger: nil,
@@ -100,30 +104,28 @@ defmodule PlaywrightEx.Supervisor do
     {child_spec, {WebSocketTransport, transport_name}}
   end
 
-  defp transport_child_spec(%{executable: executable, name: name}, connection_name) do
+  defp transport_child_spec(%{executable: executable, name: name} = config, connection_name) do
     executable = validate_executable!(executable)
+    runtime = validate_runtime!(Map.get(config, :runtime))
 
     transport_name = Module.concat(name, "PortTransport")
 
-    child_spec = {PortTransport, executable: executable, name: transport_name, connection_name: connection_name}
+    child_spec =
+      {PortTransport, executable: executable, runtime: runtime, name: transport_name, connection_name: connection_name}
+
     {child_spec, {PortTransport, transport_name}}
   end
 
+  defp validate_runtime!(nil), do: nil
+  defp validate_runtime!(runtime), do: find_executable!(runtime)
+
   defp validate_executable!(executable) do
-    cond do
-      path = System.find_executable(executable) ->
-        path
+    if File.exists?(executable), do: executable, else: find_executable!(executable)
+  end
 
-      File.exists?(executable) ->
-        executable
-
-      true ->
-        raise """
-        Playwright executable not found.
-        Ensure `playwright` executable is on `$PATH` or pass `executable` option
-        'assets/node_modules/playwright/cli.js' or similar.
-        """
-    end
+  defp find_executable!(name) do
+    System.find_executable(name) ||
+      raise "Executable not found: #{name}. Ensure it is installed and on `$PATH`."
   end
 
   defp add_new_query(url, default_params) when is_binary(url) and is_map(default_params) do
