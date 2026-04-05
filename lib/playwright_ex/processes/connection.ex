@@ -12,13 +12,15 @@ defmodule PlaywrightEx.Connection do
   import Kernel, except: [send: 2]
 
   alias PlaywrightEx.FrameEventRecorder
+  alias PlaywrightEx.Serialization
 
   @timeout_grace_factor 1.5
   @min_genserver_timeout to_timeout(second: 1)
 
   defstruct config: %{js_logger: nil, transport: {nil, nil}},
             initializers: %{},
-            pending_response: %{}
+            pending_response: %{},
+            bindings: %{}
 
   @doc false
   def child_spec(opts) do
@@ -81,6 +83,16 @@ defmodule PlaywrightEx.Connection do
   """
   def remote?(name) do
     :gen_statem.call(name, :remote?)
+  end
+
+  @doc """
+  Register a process to receive binding calls for the given binding name.
+
+  When JavaScript calls the exposed binding, `pid` receives
+  `{:binding_call, %{name: String.t(), args: list(), frame: String.t()}}`.
+  """
+  def register_binding(name, pid \\ self(), binding_name) do
+    :gen_statem.cast(name, {:register_binding, pid, binding_name})
   end
 
   # Internal
@@ -161,6 +173,38 @@ defmodule PlaywrightEx.Connection do
     end
 
     :keep_state_and_data
+  end
+
+  def started(
+        :cast,
+        {:playwright_msg,
+         %{method: :__create__, params: %{type: "BindingCall", guid: bc_guid, initializer: %{name: name} = init}}},
+        data
+      ) do
+    args = Map.get(init, :args, [])
+
+    case Map.fetch(data.bindings, name) do
+      {:ok, pid} ->
+        frame_guid = get_in(init, [:frame, :guid])
+
+        Kernel.send(pid, {:binding_call, %{name: name, args: Serialization.deserialize_arg(args), frame: frame_guid}})
+
+        post(data.config.transport, %{
+          guid: bc_guid,
+          method: :resolve,
+          params: %{result: Serialization.serialize_arg(nil)},
+          metadata: %{}
+        })
+
+      :error ->
+        :ok
+    end
+
+    :keep_state_and_data
+  end
+
+  def started(:cast, {:register_binding, pid, binding_name}, data) do
+    {:keep_state, %{data | bindings: Map.put(data.bindings, binding_name, pid)}}
   end
 
   def started(:cast, {:playwright_msg, msg}, data) when is_map_key(data.pending_response, msg.id) do

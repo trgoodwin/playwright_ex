@@ -339,6 +339,47 @@ defmodule PlaywrightEx.Page do
     NimbleOptions.new!(
       connection: PlaywrightEx.Channel.connection_opt(),
       timeout: PlaywrightEx.Channel.timeout_opt(),
+      name: [
+        type: :string,
+        required: true,
+        doc: "Function name to expose on `window` object in browser JavaScript."
+      ]
+    )
+
+  @doc """
+  Exposes a binding function on the page.
+
+  When JavaScript in the page calls `window.<name>(...)`, a `{:binding_call, %{name, args, frame}}` message
+  is sent to the process registered via `PlaywrightEx.Connection.register_binding/3`.
+
+  The binding is fire-and-forget: the JS promise auto-resolves with `undefined`.
+
+  Reference: https://playwright.dev/docs/api/class-page#page-expose-binding
+
+  ## Options
+  #{NimbleOptions.docs(schema)}
+  """
+  @schema schema
+  @type expose_binding_opt :: unquote(NimbleOptions.option_typespec(schema))
+  @spec expose_binding(PlaywrightEx.guid(), [expose_binding_opt() | PlaywrightEx.unknown_opt()]) ::
+          {:ok, any()} | {:error, any()}
+  def expose_binding(page_id, opts \\ []) do
+    {connection, opts} = opts |> PlaywrightEx.Channel.validate_known!(@schema) |> Keyword.pop!(:connection)
+    {timeout, opts} = Keyword.pop!(opts, :timeout)
+    {name, _opts} = Keyword.pop!(opts, :name)
+
+    connection
+    |> Connection.send(
+      %{guid: page_id, method: :exposeBinding, params: %{name: name, needs_handle: false}},
+      timeout
+    )
+    |> ChannelResponse.unwrap(& &1)
+  end
+
+  schema =
+    NimbleOptions.new!(
+      connection: PlaywrightEx.Channel.connection_opt(),
+      timeout: PlaywrightEx.Channel.timeout_opt(),
       source: [
         type: :string,
         required: true,

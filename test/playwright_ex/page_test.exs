@@ -2,6 +2,7 @@ defmodule PlaywrightEx.PageTest do
   use PlaywrightExCase, async: true
 
   alias PlaywrightEx.BrowserContext
+  alias PlaywrightEx.Connection
   alias PlaywrightEx.Frame
   alias PlaywrightEx.Page
 
@@ -28,6 +29,21 @@ defmodule PlaywrightEx.PageTest do
       {:ok, _} = Frame.goto(frame.guid, url: "about:blank", timeout: @timeout)
 
       assert {:ok, "ok"} = eval(frame.guid, "() => window.__page_add_init_script")
+    end
+  end
+
+  describe "expose_binding/2" do
+    test "receives structured data from browser JavaScript", %{page: page, frame: frame} do
+      {:ok, _} = Frame.goto(frame.guid, url: "about:blank", timeout: @timeout)
+
+      assert {:ok, _} = Page.expose_binding(page.guid, name: "testCallback", timeout: @timeout)
+      Connection.register_binding(PlaywrightEx.Supervisor.Connection, self(), "testCallback")
+
+      eval(frame.guid, """
+      () => { window.testCallback({foo: "bar", count: 42}) }
+      """)
+
+      assert_receive {:binding_call, %{name: "testCallback", args: [%{"foo" => "bar", "count" => 42}]}}, @timeout
     end
   end
 
